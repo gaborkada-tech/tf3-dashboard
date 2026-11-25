@@ -594,6 +594,94 @@ def api_lines(q: dict) -> dict:
     return {"lines": lines, "cargo_types": cargo_types}
 
 
+
+def api_vehicle_needs(q: dict) -> dict:
+    """Current tram fleet advice, based on the latest vehicle and station snapshots."""
+    gid = _gid()
+    vehicle_sid = one("SELECT MAX(x.snapshot_id) sid FROM vehicle_state x JOIN snapshot s USING(snapshot_id) WHERE s.game_id=?", (gid,))
+    station_sid = one("SELECT MAX(x.snapshot_id) sid FROM station_state x JOIN snapshot s USING(snapshot_id) WHERE s.game_id=?", (gid,))
+    if not vehicle_sid or vehicle_sid["sid"] is None:
+        return {"lines": [], "summary": {"buy": 0, "sell": 0, "ok": 0}, "empty": True}
+    vsid = vehicle_sid["sid"]
+    ssid = station_sid["sid"] if station_sid and station_sid["sid"] is not None else -1
+
+    # A tram is counted as empty only while it is actually moving (EN_ROUTE with positive speed)
+    # and carries no passengers. Waiting at a terminal is deliberately not considered empty mileage.
+    fleet = rows("""SELECT vs.line_id, COUNT(*) AS tram_count,
+                           SUM(CASE WHEN vs.state='EN_ROUTE' AND COALESCE(vs.speed_ms,0)>0
+                                         AND COALESCE(vs.load,0)=0 THEN 1 ELSE 0 END) AS empty_moving,
+                           MAX(v.capacity) AS largest_capacity
+                    FROM vehicle v JOIN vehicle_state vs ON vs.vehicle_id=v.vehicle_id
+                    WHERE v.game_id=? AND vs.snapshot_id=? AND v.carrier='TRAM' AND vs.line_id IS NOT NULL
+                    GROUP BY vs.line_id""", (gid, vsid))
+    if not fleet:
+        return {"lines": [], "summary": {"buy": 0, "sell": 0, "ok": 0}, "empty": True}
+    fleet_by_line = {r["line_id"]: r for r in fleet}
+
+    # cargo_type.key is language-neutral; the localized name is only a fallback for older exports.
+    passenger_ids = set()
+    for c in rows("SELECT cargo_id, key, name FROM cargo_type WHERE game_id=?", (gid,)):
+        token = (c.get("key") or "").lower()
+        label = (c.get("name") or "").lower()
+        if "passenger" in token or "passenger" in label:
+            passenger_ids.add(c["cargo_id"])
+
+    stops = rows("""SELECT ls.line_id, ls.stop_index, COALESCE(st.name, ls.name) AS stop_name,
+                           t.name AS town_name, ss.waiting
+                    FROM line_stop ls
+                    LEFT JOIN station st ON st.game_id=ls.game_id AND st.station_id=ls.station
+                    LEFT JOIN town t ON t.game_id=st.game_id AND t.town_id=st.town_id
+                    LEFT JOIN station_state ss ON ss.station_id=st.station_id AND ss.snapshot_id=?
+                    WHERE ls.game_id=? AND ls.gone IS NULL
+                    ORDER BY ls.line_id, ls.stop_index""", (ssid, gid))
+    stop_by_line: dict[int, list] = {}
+    for stop in stops:
+        waiting = 0
+        try:
+            entries = json.loads(stop["waiting"]) if stop.get("waiting") else []
+            if isinstance(entries, list):
+                for item in entries:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        cargo_id = int(item.get("cargo_type"))
+                    except (TypeError, ValueError):
+                        continue
+                    if cargo_id in passenger_ids:
+                        waiting += int(item.get("total") or 0)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+        stop["waiting_pax"] = waiting
+        stop_by_line.setdefault(stop["line_id"], []).append(stop)
+
+    result = []
+    summary = {"buy": 0, "sell": 0, "ok": 0}
+    names = {r["line_id"]: r["name"] for r in rows(
+        "SELECT line_id, name FROM line WHERE game_id=? AND gone IS NULL", (gid,))}
+    for line_id, v in fleet_by_line.items():
+        line_stops = stop_by_line.get(line_id, [])
+        busiest = max(line_stops, key=lambda x: x["waiting_pax"], default={})
+        empty_moving = int(v.get("empty_moving") or 0)
+        largest_capacity = v.get("largest_capacity")
+        waiting = int(busiest.get("waiting_pax") or 0)
+        if empty_moving > 1:
+            recommendation = "sell"
+        elif largest_capacity is not None and waiting > largest_capacity and empty_moving == 0:
+            recommendation = "buy"
+        else:
+            recommendation = "ok"
+        summary[recommendation] += 1
+        result.append({
+            "line_id": line_id, "line_name": names.get(line_id) or f"#{line_id}",
+            "town_name": next((s.get("town_name") for s in line_stops if s.get("town_name")), None),
+            "tram_count": int(v.get("tram_count") or 0), "empty_moving": empty_moving,
+            "stop_name": busiest.get("stop_name"), "waiting": waiting,
+            "capacity": largest_capacity, "recommendation": recommendation,
+        })
+    result.sort(key=lambda x: ({"buy": 0, "sell": 1, "ok": 2}[x["recommendation"]], (x["town_name"] or "").casefold(), x["line_name"].casefold()))
+    return {"lines": result, "summary": summary, "empty": False}
+
+
 def api_line_history(q: dict) -> dict:
     lid = int(q["id"][0])
     gid = _gid()
@@ -2304,7 +2392,7 @@ def api_diag(q: dict) -> dict:
 
 
 ROUTES = {
-    "/api/overview": api_overview, "/api/cost": api_cost, "/api/finance": api_finance, "/api/journal": api_journal, "/api/alerts": api_alerts, "/api/lines": api_lines,
+    "/api/overview": api_overview, "/api/vehicle_needs": api_vehicle_needs, "/api/cost": api_cost, "/api/finance": api_finance, "/api/journal": api_journal, "/api/alerts": api_alerts, "/api/lines": api_lines,
     "/api/line_history": api_line_history, "/api/vehicles": api_vehicles, "/api/fleet": api_fleet, "/api/vehicle_history": api_vehicle_history, "/api/towns": api_towns,
     "/api/town_history": api_town_history, "/api/industries": api_industries, "/api/industry_history": api_industry_history, "/api/stations": api_stations,
     "/api/station_history": api_station_history, "/api/depots": api_depots, "/api/map": api_map, "/api/map_cargo": api_map_cargo, "/api/geo": api_geo, "/api/heightmap": api_heightmap, "/api/line_paths": api_line_paths, "/api/distance": api_distance, "/api/travellings": api_travellings, "/api/diag": api_diag, "/api/views": api_views,
