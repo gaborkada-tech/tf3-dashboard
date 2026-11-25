@@ -607,8 +607,11 @@ def api_vehicle_needs(q: dict) -> dict:
     ssid = station_sid["sid"] if station_sid and station_sid["sid"] is not None else -1
 
     # Depot trams already assigned to a line count as purchased fleet, but not as empty mileage.
-    # Only actually moving, passenger-free trams are candidates for selling.
+    # Buying uses every assigned tram regardless of movement/state: any zero-load tram
+    # (including one stopped at a terminal or waiting in the depot) is spare capacity.
+    # Selling remains limited to trams actually moving empty.
     fleet = rows("""SELECT vs.line_id, COUNT(*) AS tram_count,
+                           SUM(CASE WHEN COALESCE(vs.load,0)=0 THEN 1 ELSE 0 END) AS empty_count,
                            SUM(CASE WHEN vs.state='EN_ROUTE' AND COALESCE(vs.speed_ms,0)>0
                                          AND COALESCE(vs.load,0)=0 THEN 1 ELSE 0 END) AS empty_moving,
                            SUM(CASE WHEN vs.state='IN_DEPOT' THEN 1 ELSE 0 END) AS in_depot,
@@ -690,7 +693,7 @@ def api_vehicle_needs(q: dict) -> dict:
         waiting = int(busiest.get("waiting_pax") or 0)
         if empty_moving > 1:
             recommendation = "sell"
-        elif largest_capacity is not None and waiting > largest_capacity and empty_moving + in_depot == 0:
+        elif largest_capacity is not None and waiting > largest_capacity and int(v.get("empty_count") or 0) == 0:
             recommendation = "buy"
         else:
             recommendation = "ok"
