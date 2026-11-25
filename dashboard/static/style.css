@@ -815,3 +815,13 @@ table.kv.boosters .bar.ok > i { background: var(--ok, #3fb950); }
 #cost .cmdhint { margin-top: 6px; }
 #cost .btns { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
 #cost .pmsg { opacity: 0; transition: opacity .3s; color: var(--muted); font-size: 11px; } #cost .pmsg.on { opacity: 1; }
+
+/* Tram fleet advice */
+.tram-needs-summary { display: grid; grid-template-columns: repeat(3, minmax(130px, 1fr)); gap: var(--gap); }
+.tram-kpi { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel2); color: var(--muted); }
+.tram-kpi strong { color: var(--text); font-size: 22px; font-variant-numeric: tabular-nums; }
+.tram-kpi.buy strong, .tram-advice.buy { color: var(--warn); }
+.tram-kpi.sell strong, .tram-advice.sell { color: var(--bad); }
+.tram-kpi.ok strong, .tram-advice.ok { color: var(--ok); }
+.tram-advice { font-weight: 600; }
+@media (max-width: 700px) { .tram-needs-summary { grid-template-columns: 1fr; } }
