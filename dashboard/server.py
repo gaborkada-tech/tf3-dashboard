@@ -629,6 +629,9 @@ def api_vehicle_needs(q: dict) -> dict:
         sell_candidates.setdefault(vehicle["line_id"], []).append(
             vehicle.get("name") or f"#{vehicle['vehicle_id']}"
         )
+    # Keep one empty tram as the reserve; only the remaining vehicles are sale recommendations.
+    for line_id, candidates in sell_candidates.items():
+        sell_candidates[line_id] = candidates[1:] if len(candidates) > 1 else []
 
     # Passenger cargo has the language-neutral key "passengers" (id 0 in the sample export).
     passenger_ids = {r["cargo_id"] for r in rows(
