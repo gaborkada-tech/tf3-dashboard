@@ -1095,11 +1095,11 @@ const rgbLit = (r, g, b, minY = 0.42) => {
       table.innerHTML = `<tbody><tr><td class="muted">${esc(t("tram_no_lines"))}</td></tr></tbody>`;
       return;
     }
-    const headers = ["tram_city", "tram_line", "tram_recommendation", "tram_total", "tram_empty_moving", "tram_busiest_stop", "tram_waiting", "tram_capacity"];
-    const cells = ["town_name", "line_name", "recommendation", "tram_count", "empty_moving", "stop_name", "waiting", "capacity"];
-    table.innerHTML = `<thead><tr>${headers.map(k => `<th>${esc(t(k))}</th>`).join("")}</tr></thead><tbody>${lines.map(l => {
+    const headers = ["tram_city", "tram_line", "tram_recommendation", "tram_sell_vehicles", "tram_total", "tram_in_depot", "tram_empty_moving", "tram_busiest_stop", "tram_waiting", "tram_capacity"];
+    table.innerHTML = `<thead><tr>${headers.map(k => `<th>${esc(t(k))}</th>`).join("")}</thead><tbody>${lines.map(l => {
       const rec = l.recommendation, label = t(rec === "buy" ? "tram_buy" : rec === "sell" ? "tram_sell" : "tram_ok");
-      return `<tr><td>${esc(l.town_name || "–")}</td><td>${esc(l.line_name)}</td><td><span class="tram-advice ${rec}">${esc(label)}</span></td><td class="num">${int(l.tram_count)}</td><td class="num">${int(l.empty_moving)}</td><td>${esc(l.stop_name || "–")}</td><td class="num">${int(l.waiting)}</td><td class="num">${l.capacity == null ? "–" : int(l.capacity)}</td></tr>`;
+      const sellNames = rec === "sell" && l.sell_vehicles?.length ? l.sell_vehicles.join(", ") : "–";
+      return `<tr><td>${esc(l.town_name || "–")}</td><td>${esc(l.line_name)}</td><td><span class="tram-advice ${rec}">${esc(label)}</span></td><td>${esc(sellNames)}</td><td class="num">${int(l.tram_count)}</td><td class="num">${int(l.in_depot || 0)}</td><td class="num">${int(l.empty_moving)}</td><td>${esc(l.stop_name || "–")}</td><td class="num">${int(l.waiting)}</td><td class="num">${l.capacity == null ? "–" : int(l.capacity)}</td></tr>`;
     }).join("")}</tbody>`;
   }
 
