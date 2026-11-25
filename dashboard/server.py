@@ -625,11 +625,11 @@ def api_vehicle_needs(q: dict) -> dict:
                            WHERE v.game_id=? AND vs.snapshot_id=? AND v.carrier='TRAM'
                              AND vs.line_id IS NOT NULL AND vs.state='EN_ROUTE'
                              AND COALESCE(vs.speed_ms,0)>0 AND COALESCE(vs.load,0)=0
-                           ORDER BY vs.line_id, v.name, v.vehicle_id""", (gid, vsid)):
+                           ORDER BY vs.line_id, COALESCE(vs.maintenance,1) DESC, v.name, v.vehicle_id""", (gid, vsid)):
         sell_candidates.setdefault(vehicle["line_id"], []).append(
             vehicle.get("name") or f"#{vehicle['vehicle_id']}"
         )
-    # Keep one empty tram as the reserve; only the remaining vehicles are sale recommendations.
+    # Keep the best-maintained empty tram as the reserve; recommend the less-maintained surplus for sale.
     for line_id, candidates in sell_candidates.items():
         sell_candidates[line_id] = candidates[1:] if len(candidates) > 1 else []
 
