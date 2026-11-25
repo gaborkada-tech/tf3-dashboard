@@ -606,11 +606,12 @@ def api_vehicle_needs(q: dict) -> dict:
     vsid = vehicle_sid["sid"]
     ssid = station_sid["sid"] if station_sid and station_sid["sid"] is not None else -1
 
-    # A tram is counted as empty only while it is actually moving (EN_ROUTE with positive speed)
-    # and carries no passengers. Waiting at a terminal is deliberately not considered empty mileage.
+    # Depot trams already assigned to a line count as purchased fleet, but not as empty mileage.
+    # Only actually moving, passenger-free trams are candidates for selling.
     fleet = rows("""SELECT vs.line_id, COUNT(*) AS tram_count,
                            SUM(CASE WHEN vs.state='EN_ROUTE' AND COALESCE(vs.speed_ms,0)>0
                                          AND COALESCE(vs.load,0)=0 THEN 1 ELSE 0 END) AS empty_moving,
+                           SUM(CASE WHEN vs.state='IN_DEPOT' THEN 1 ELSE 0 END) AS in_depot,
                            MAX(v.capacity) AS largest_capacity
                     FROM vehicle v JOIN vehicle_state vs ON vs.vehicle_id=v.vehicle_id
                     WHERE v.game_id=? AND vs.snapshot_id=? AND v.carrier='TRAM' AND vs.line_id IS NOT NULL
@@ -618,6 +619,16 @@ def api_vehicle_needs(q: dict) -> dict:
     if not fleet:
         return {"lines": [], "summary": {"buy": 0, "sell": 0, "ok": 0}, "empty": True}
     fleet_by_line = {r["line_id"]: r for r in fleet}
+    sell_candidates: dict[int, list[str]] = {}
+    for vehicle in rows("""SELECT vs.line_id, v.vehicle_id, v.name
+                           FROM vehicle v JOIN vehicle_state vs ON vs.vehicle_id=v.vehicle_id
+                           WHERE v.game_id=? AND vs.snapshot_id=? AND v.carrier='TRAM'
+                             AND vs.line_id IS NOT NULL AND vs.state='EN_ROUTE'
+                             AND COALESCE(vs.speed_ms,0)>0 AND COALESCE(vs.load,0)=0
+                           ORDER BY vs.line_id, v.name, v.vehicle_id""", (gid, vsid)):
+        sell_candidates.setdefault(vehicle["line_id"], []).append(
+            vehicle.get("name") or f"#{vehicle['vehicle_id']}"
+        )
 
     # Passenger cargo has the language-neutral key "passengers" (id 0 in the sample export).
     passenger_ids = {r["cargo_id"] for r in rows(
@@ -671,11 +682,12 @@ def api_vehicle_needs(q: dict) -> dict:
         line_stops = stop_by_line.get(line_id, [])
         busiest = max(line_stops, key=lambda x: x["waiting_pax"], default={})
         empty_moving = int(v.get("empty_moving") or 0)
+        in_depot = int(v.get("in_depot") or 0)
         largest_capacity = v.get("largest_capacity")
         waiting = int(busiest.get("waiting_pax") or 0)
         if empty_moving > 1:
             recommendation = "sell"
-        elif largest_capacity is not None and waiting > largest_capacity and empty_moving == 0:
+        elif largest_capacity is not None and waiting > largest_capacity and empty_moving + in_depot == 0:
             recommendation = "buy"
         else:
             recommendation = "ok"
@@ -684,6 +696,7 @@ def api_vehicle_needs(q: dict) -> dict:
             "line_id": line_id, "line_name": names.get(line_id) or f"#{line_id}",
             "town_name": next((s.get("town_name") for s in line_stops if s.get("town_name")), None),
             "tram_count": int(v.get("tram_count") or 0), "empty_moving": empty_moving,
+            "in_depot": in_depot, "sell_vehicles": sell_candidates.get(line_id, []),
             "stop_name": busiest.get("stop_name"), "waiting": waiting,
             "capacity": largest_capacity, "recommendation": recommendation,
         })
