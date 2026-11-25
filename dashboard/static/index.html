@@ -96,6 +96,7 @@
   <button data-tab="overview" class="active"><i class="ico" data-ico="vehicles"></i><span data-i18n="tab_overview"></span></button>
   <button data-tab="vehicles"><i class="ico" data-ico="veh_bus"></i><span data-i18n="tab_vehicles"></span></button>
   <button data-tab="lines"><i class="ico" data-ico="line"></i><span data-i18n="tab_lines"></span></button>
+  <button data-tab="vehicle-needs"><i class="ico" data-ico="veh_tram"></i><span data-i18n="tab_vehicle_needs"></span></button>
   <button data-tab="map"><i class="ico" data-ico="locate"></i><span data-i18n="tab_map"></span></button>
   <button data-tab="towns"><i class="ico" data-ico="town"></i><span data-i18n="tab_towns"></span></button>
   <button data-tab="industries"><i class="ico" data-ico="industry"></i><span data-i18n="tab_industries"></span></button>
@@ -194,6 +195,21 @@
     <div class="panels" data-layout="lines">
       <div class="card tablecard" data-panel="lines-table" data-w="8"><table id="lines-table" class="data"></table></div>
       <div class="card sticky" id="line-detail" data-panel="line-detail" data-w="4"><h2 data-i18n="detail"></h2><p class="muted" data-i18n="select_line"></p></div>
+    </div>
+  </section>
+
+  <!-- ------------------------------------------------ tram fleet advice -->
+  <section id="tab-vehicle-needs" class="tab">
+    <div class="toolbar">
+      <span class="hint" data-i18n="tram_needs_hint"></span>
+    </div>
+    <div class="panels" data-layout="vehicle-needs">
+      <div class="card" data-panel="tram-needs-summary" data-w="12">
+        <div id="tram-needs-summary" class="tram-needs-summary"></div>
+      </div>
+      <div class="card tablecard" data-panel="tram-needs-table" data-w="12">
+        <table id="tram-needs-table" class="data"></table>
+      </div>
     </div>
   </section>
 
