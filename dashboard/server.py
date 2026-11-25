@@ -595,6 +595,7 @@ def api_lines(q: dict) -> dict:
 
 
 
+
 def api_vehicle_needs(q: dict) -> dict:
     """Current tram fleet advice, based on the latest vehicle and station snapshots."""
     gid = _gid()
@@ -618,27 +619,23 @@ def api_vehicle_needs(q: dict) -> dict:
         return {"lines": [], "summary": {"buy": 0, "sell": 0, "ok": 0}, "empty": True}
     fleet_by_line = {r["line_id"]: r for r in fleet}
 
-    # cargo_type.key is language-neutral; the localized name is only a fallback for older exports.
-    passenger_ids = set()
-    for c in rows("SELECT cargo_id, key, name FROM cargo_type WHERE game_id=?", (gid,)):
-        token = (c.get("key") or "").lower()
-        label = (c.get("name") or "").lower()
-        if "passenger" in token or "passenger" in label:
-            passenger_ids.add(c["cargo_id"])
+    # Passenger cargo has the language-neutral key "passengers" (id 0 in the sample export).
+    passenger_ids = {r["cargo_id"] for r in rows(
+        "SELECT cargo_id FROM cargo_type WHERE game_id=? AND lower(COALESCE(key,''))='passengers'", (gid,))}
 
-    stops = rows("""SELECT ls.line_id, ls.stop_index, COALESCE(st.name, ls.name) AS stop_name,
-                           t.name AS town_name, ss.waiting
-                    FROM line_stop ls
-                    LEFT JOIN station st ON st.game_id=ls.game_id AND st.station_id=ls.station
-                    LEFT JOIN town t ON t.game_id=st.game_id AND t.town_id=st.town_id
-                    LEFT JOIN station_state ss ON ss.station_id=st.station_id AND ss.snapshot_id=?
-                    WHERE ls.game_id=? AND ls.gone IS NULL
-                    ORDER BY ls.line_id, ls.stop_index""", (ssid, gid))
-    stop_by_line: dict[int, list] = {}
-    for stop in stops:
-        waiting = 0
+    # line_stop.station is a terminal index within station_group, not a station entity id.
+    # Resolve demand through station_group and add up all station entities belonging to that group.
+    station_rows = rows("""SELECT st.station_group, st.name, t.name AS town_name, ss.waiting
+                           FROM station st
+                           LEFT JOIN town t ON t.game_id=st.game_id AND t.town_id=st.town_id
+                           LEFT JOIN station_state ss ON ss.station_id=st.station_id AND ss.snapshot_id=?
+                           WHERE st.game_id=? AND st.gone IS NULL AND st.station_group IS NOT NULL""", (ssid, gid))
+    group_demand: dict[int, dict] = {}
+    for st in station_rows:
+        group = st["station_group"]
+        info = group_demand.setdefault(group, {"waiting": 0, "town_name": st.get("town_name"), "station_name": st.get("name")})
         try:
-            entries = json.loads(stop["waiting"]) if stop.get("waiting") else []
+            entries = json.loads(st["waiting"]) if st.get("waiting") else []
             if isinstance(entries, list):
                 for item in entries:
                     if not isinstance(item, dict):
@@ -648,16 +645,28 @@ def api_vehicle_needs(q: dict) -> dict:
                     except (TypeError, ValueError):
                         continue
                     if cargo_id in passenger_ids:
-                        waiting += int(item.get("total") or 0)
+                        info["waiting"] += int(item.get("total") or 0)
         except (TypeError, ValueError, json.JSONDecodeError):
             pass
-        stop["waiting_pax"] = waiting
-        stop_by_line.setdefault(stop["line_id"], []).append(stop)
+        if not info.get("town_name") and st.get("town_name"):
+            info["town_name"] = st["town_name"]
 
-    result = []
-    summary = {"buy": 0, "sell": 0, "ok": 0}
+    stops = rows("""SELECT line_id, stop_index, station_group, name
+                    FROM line_stop WHERE game_id=? AND gone IS NULL
+                    ORDER BY line_id, stop_index""", (gid,))
+    stop_by_line: dict[int, list] = {}
+    for stop in stops:
+        demand = group_demand.get(stop["station_group"], {})
+        stop_by_line.setdefault(stop["line_id"], []).append({
+            "stop_name": stop.get("name") or demand.get("station_name"),
+            "town_name": demand.get("town_name"),
+            "waiting_pax": int(demand.get("waiting") or 0),
+        })
+
     names = {r["line_id"]: r["name"] for r in rows(
         "SELECT line_id, name FROM line WHERE game_id=? AND gone IS NULL", (gid,))}
+    result = []
+    summary = {"buy": 0, "sell": 0, "ok": 0}
     for line_id, v in fleet_by_line.items():
         line_stops = stop_by_line.get(line_id, [])
         busiest = max(line_stops, key=lambda x: x["waiting_pax"], default={})
