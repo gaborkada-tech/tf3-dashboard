@@ -715,8 +715,11 @@ def api_vehicle_needs(q: dict) -> dict:
             # its capacity, regardless of whether it is moving, stopped, loaded, empty, or in depot.
             # Individual vehicle revenue is not exported; a previous non-zero load on this same
             # line is the available evidence that an empty returning bus has carried passengers.
-            total_capacity = float(v.get("total_capacity") or 0)
             capacity = float(largest_capacity or 0)
+            # Bus capacity is normalized per vehicle: fleet size multiplied by the
+            # largest bus capacity on the line. Do not rely on per-vehicle capacity
+            # metadata, which may be zero/missing for empty buses in the export.
+            total_capacity = vehicle_count * capacity
             required_count = math.ceil(waiting / capacity) if capacity > 0 and waiting > 0 else 0
 
             # Buy only the capacity deficit, rounded up to whole buses of the largest current size.
@@ -742,9 +745,8 @@ def api_vehicle_needs(q: dict) -> dict:
             for candidate in candidates:
                 if len(sell_vehicles) >= max_sell:
                     break
-                # Some empty vehicles have no capacity populated in the vehicle record.
-                # In that case use the largest known capacity on this line rather than zero.
-                candidate_capacity = float(candidate.get("capacity") or capacity or 0)
+                # Every bus is counted at the line's largest bus capacity.
+                candidate_capacity = capacity
                 if remaining_count - 1 < required_count:
                     break
                 if remaining_capacity - candidate_capacity < waiting:
