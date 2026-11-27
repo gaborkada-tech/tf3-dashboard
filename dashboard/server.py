@@ -614,7 +614,8 @@ def api_vehicle_needs(q: dict) -> dict:
                            SUM(CASE WHEN vs.state='EN_ROUTE' AND COALESCE(vs.speed_ms,0)>0
                                          AND COALESCE(vs.load,0)=0 THEN 1 ELSE 0 END) AS empty_moving,
                            SUM(CASE WHEN vs.state='IN_DEPOT' THEN 1 ELSE 0 END) AS in_depot,
-                           MAX(v.capacity) AS largest_capacity
+                           MAX(v.capacity) AS largest_capacity,
+                           SUM(COALESCE(v.capacity,0)) AS total_capacity
                     FROM vehicle v JOIN vehicle_state vs ON vs.vehicle_id=v.vehicle_id
                     WHERE v.game_id=? AND vs.snapshot_id=? AND vs.line_id IS NOT NULL
                       AND (v.carrier='TRAM' OR (v.carrier='ROAD' AND v.icon_type='Bus'))
@@ -701,10 +702,19 @@ def api_vehicle_needs(q: dict) -> dict:
             else:
                 recommendation = "ok"
         else:
-            # A bus returning empty after it has carried passengers is surplus: do not send it
-            # all the way back to the city. Individual vehicle revenue is not exported by the mod;
-            # a previous non-zero load is the available evidence that it has completed a trip.
-            candidates = rows("""SELECT v.vehicle_id, v.name
+            # Bus demand is measured at the first (city) stop. Every assigned bus contributes
+            # its capacity, regardless of whether it is moving, stopped, loaded, empty, or in depot.
+            # Individual vehicle revenue is not exported; a previous non-zero load on this same
+            # line is the available evidence that an empty returning bus has carried passengers.
+            total_capacity = float(v.get("total_capacity") or 0)
+            capacity = float(largest_capacity or 0)
+            required_count = math.ceil(waiting / capacity) if capacity > 0 and waiting > 0 else 0
+
+            # Buy only the capacity deficit, rounded up to whole buses of the largest current size.
+            if capacity > 0 and waiting > total_capacity:
+                buy_count = math.ceil((waiting - total_capacity) / capacity)
+
+            candidates = rows("""SELECT v.vehicle_id, v.name, COALESCE(v.capacity,0) AS capacity
                                  FROM vehicle v JOIN vehicle_state vs ON vs.vehicle_id=v.vehicle_id
                                  WHERE v.game_id=? AND vs.snapshot_id=? AND v.carrier='ROAD' AND v.icon_type='Bus'
                                    AND vs.line_id=? AND vs.state='EN_ROUTE'
@@ -713,15 +723,25 @@ def api_vehicle_needs(q: dict) -> dict:
                                                JOIN snapshot os USING(snapshot_id)
                                                WHERE os.game_id=v.game_id AND old.vehicle_id=v.vehicle_id
                                                  AND old.line_id=vs.line_id AND COALESCE(old.load,0)>0)
-                                 ORDER BY v.name, v.vehicle_id""", (gid, vsid, line_id))
-            sell_vehicles = [x.get("name") or f"#{x['vehicle_id']}" for x in candidates]
+                                 ORDER BY COALESCE(v.capacity,0), v.name, v.vehicle_id""", (gid, vsid, line_id))
 
-            capacity = float(largest_capacity or 0)
-            # Do not subtract the existing fleet from the requested purchase quantity.
-            # Buy when demand exceeds one bus, or bootstrap a single-bus line as soon as
-            # at least one passenger is waiting. The purchase batch is never smaller than two.
-            if waiting > 0 and ((capacity > 0 and waiting > capacity) or vehicle_count == 1):
-                buy_count = max(2, math.ceil(waiting / capacity)) if capacity > 0 else 2
+            # Sell only the eligible empty returners, and never reduce either the remaining
+            # fleet count below ceil(waiting / largest bus capacity) or its capacity below demand.
+            remaining_capacity = total_capacity
+            remaining_count = vehicle_count
+            max_sell = max(0, vehicle_count - required_count)
+            for candidate in candidates:
+                if len(sell_vehicles) >= max_sell:
+                    break
+                candidate_capacity = float(candidate.get("capacity") or 0)
+                if remaining_count - 1 < required_count:
+                    break
+                if remaining_capacity - candidate_capacity < waiting:
+                    continue
+                sell_vehicles.append(candidate.get("name") or f"#{candidate['vehicle_id']}")
+                remaining_capacity -= candidate_capacity
+                remaining_count -= 1
+
             if sell_vehicles and buy_count:
                 recommendation = "buy_sell"
             elif sell_vehicles:
@@ -743,7 +763,7 @@ def api_vehicle_needs(q: dict) -> dict:
             "tram_count": vehicle_count, "empty_moving": empty_moving,
             "in_depot": in_depot, "sell_vehicles": sell_vehicles, "buy_count": buy_count,
             "stop_name": demand_stop.get("stop_name"), "waiting": waiting,
-            "capacity": largest_capacity, "recommendation": recommendation,
+            "capacity": largest_capacity, "total_capacity": v.get("total_capacity"), "recommendation": recommendation,
         })
     result.sort(key=lambda x: ({"buy_sell": 0, "buy": 0, "sell": 1, "ok": 2}[x["recommendation"]],
                                (x["town_name"] or "").casefold(), x["line_name"].casefold()))
