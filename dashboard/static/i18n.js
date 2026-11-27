@@ -37,7 +37,7 @@ window.I18N = {
     tram_buy_count: "Lines with vehicles to buy", tram_sell_count: "Lines with vehicles to sell", tram_ok_count: "Lines with no change",
     tram_no_lines: "No active bus or tram lines, or no current vehicle data.",
     tram_city: "City", tram_line: "Line", tram_recommendation: "Recommendation", tram_sell_vehicles: "Vehicle(s) to sell", tram_total: "Vehicles", tram_in_depot: "In depot",
-    tram_empty_moving: "Empty vehicles moving", tram_busiest_stop: "Demand stop", tram_waiting: "Waiting passengers", tram_capacity: "Largest vehicle capacity",
+    tram_empty_moving: "Empty vehicles moving", tram_busiest_stop: "Demand stop", tram_waiting: "Waiting passengers", tram_capacity: "Largest vehicle capacity", tram_line_capacity: "Total line capacity",
     tram_buy: "Buy", tram_sell: "Sell surplus vehicle(s)", tram_ok: "No change", tram_bus: "Bus", tram_tram: "Tram",
     wiki_open: "Open in browser", wiki_note: "TF3 Mechanics, the community wiki of the game's mechanics. Needs an internet connection.",
     // overview
