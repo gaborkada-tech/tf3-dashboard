@@ -33,12 +33,12 @@ window.I18N = {
     dur_s: "{n} s", dur_m: "{n} min", dur_h: "{n} h",
     // tabs
     tab_overview: "Operations", tab_vehicles: "Vehicles", tab_lines: "Lines", tab_map: "Map", tab_towns: "Towns", tab_industries: "Industries", tab_stations: "Stations & depots", tab_finance: "Finances", tab_mechanics: "Mechanics", tab_vehicle_needs: "Vehicle needs",
-    tram_needs_hint: "Trams only · recommendations are advisory; no vehicles are bought or sold automatically.",
-    tram_buy_count: "Lines to add a tram", tram_sell_count: "Lines with surplus trams", tram_ok_count: "Lines adequately supplied",
-    tram_no_lines: "No active tram lines or no current tram data.",
-    tram_city: "City", tram_line: "Line", tram_recommendation: "Recommendation", tram_sell_vehicles: "Vehicle(s) to sell", tram_total: "Trams", tram_in_depot: "In depot",
-    tram_empty_moving: "Empty trams moving", tram_busiest_stop: "Busiest stop", tram_waiting: "Waiting passengers", tram_capacity: "Largest tram capacity",
-    tram_buy: "Buy 1 tram", tram_sell: "Sell surplus tram(s)", tram_ok: "No change",
+    tram_needs_hint: "Buses and trams · recommendations are advisory; no vehicles are bought or sold automatically.",
+    tram_buy_count: "Lines with vehicles to buy", tram_sell_count: "Lines with vehicles to sell", tram_ok_count: "Lines with no change",
+    tram_no_lines: "No active bus or tram lines, or no current vehicle data.",
+    tram_city: "City", tram_line: "Line", tram_recommendation: "Recommendation", tram_sell_vehicles: "Vehicle(s) to sell", tram_total: "Vehicles", tram_in_depot: "In depot",
+    tram_empty_moving: "Empty vehicles moving", tram_busiest_stop: "Demand stop", tram_waiting: "Waiting passengers", tram_capacity: "Largest vehicle capacity",
+    tram_buy: "Buy", tram_sell: "Sell surplus vehicle(s)", tram_ok: "No change", tram_bus: "Bus", tram_tram: "Tram",
     wiki_open: "Open in browser", wiki_note: "TF3 Mechanics, the community wiki of the game's mechanics. Needs an internet connection.",
     // overview
     fleet_in_service: "Fleet in service", samples: "{n} samples", by_carrier: "By carrier", alerts: "Alerts", none: "none",
