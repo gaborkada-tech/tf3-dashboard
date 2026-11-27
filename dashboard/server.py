@@ -712,7 +712,7 @@ def api_vehicle_needs(q: dict) -> dict:
                                    AND EXISTS (SELECT 1 FROM vehicle_state old
                                                JOIN snapshot os USING(snapshot_id)
                                                WHERE os.game_id=v.game_id AND old.vehicle_id=v.vehicle_id
-                                                 AND COALESCE(old.load,0)>0)
+                                                 AND old.line_id=vs.line_id AND COALESCE(old.load,0)>0)
                                  ORDER BY v.name, v.vehicle_id""", (gid, vsid, line_id))
             sell_vehicles = [x.get("name") or f"#{x['vehicle_id']}" for x in candidates]
 
