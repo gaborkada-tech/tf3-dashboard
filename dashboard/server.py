@@ -632,9 +632,8 @@ def api_vehicle_needs(q: dict) -> dict:
         sell_candidates.setdefault(vehicle["line_id"], []).append(
             vehicle.get("name") or f"#{vehicle['vehicle_id']}"
         )
-    # Keep the best-maintained empty tram as the reserve; recommend the less-maintained surplus for sale.
-    for line_id, candidates in sell_candidates.items():
-        sell_candidates[line_id] = candidates[1:] if len(candidates) > 1 else []
+    # Candidate lists are ordered by maintenance (best first). The reserve count is
+    # calculated per line from current peak-stop demand and the largest tram capacity.
 
     # Passenger cargo has the language-neutral key "passengers" (id 0 in the sample export).
     passenger_ids = {r["cargo_id"] for r in rows(
@@ -691,7 +690,10 @@ def api_vehicle_needs(q: dict) -> dict:
         in_depot = int(v.get("in_depot") or 0)
         largest_capacity = v.get("largest_capacity")
         waiting = int(busiest.get("waiting_pax") or 0)
-        if empty_moving > 1:
+        reserve_empty = math.ceil(waiting / largest_capacity) if largest_capacity and largest_capacity > 0 else 1
+        moving_candidates = sell_candidates.get(line_id, [])
+        sell_vehicles = moving_candidates[reserve_empty:] if len(moving_candidates) > reserve_empty else []
+        if sell_vehicles:
             recommendation = "sell"
         elif largest_capacity is not None and waiting > largest_capacity and int(v.get("empty_count") or 0) == 0:
             recommendation = "buy"
@@ -702,7 +704,7 @@ def api_vehicle_needs(q: dict) -> dict:
             "line_id": line_id, "line_name": names.get(line_id) or f"#{line_id}",
             "town_name": next((s.get("town_name") for s in line_stops if s.get("town_name")), None),
             "tram_count": int(v.get("tram_count") or 0), "empty_moving": empty_moving,
-            "in_depot": in_depot, "sell_vehicles": sell_candidates.get(line_id, []),
+            "in_depot": in_depot, "sell_vehicles": sell_vehicles,
             "stop_name": busiest.get("stop_name"), "waiting": waiting,
             "capacity": largest_capacity, "recommendation": recommendation,
         })
