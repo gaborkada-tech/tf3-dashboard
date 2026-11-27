@@ -1105,7 +1105,8 @@ const rgbLit = (r, g, b, minY = 0.42) => {
       const label = parts.join(" · ");
       const sellNames = l.sell_vehicles?.length ? l.sell_vehicles.join(", ") : "–";
       const typeLabel = l.vehicle_type === "BUS" ? t("tram_bus") : t("tram_tram");
-      return `<tr><td>${esc(l.town_name || "–")}</td><td>${esc(l.line_name)}</td><td><span class="tram-advice ${rec}">${esc(label)}</span></td><td>${esc(sellNames)}</td><td class="num" title="${esc(typeLabel)}">${int(l.vehicle_count ?? l.tram_count)}</td><td class="num">${int(l.in_depot || 0)}</td><td class="num">${int(l.empty_moving)}</td><td>${esc(l.stop_name || "–")}</td><td class="num">${int(l.waiting)}</td><td class="num">${l.capacity == null ? "–" : int(l.capacity)}</td></tr>`;
+      const adviceClass = l.buy_count > 0 ? "buy" : l.sell_vehicles?.length ? "sell" : "ok";
+      return `<tr><td>${esc(l.town_name || "–")}</td><td>${esc(l.line_name)}</td><td><span class="tram-advice ${adviceClass}">${esc(label)}</span></td><td>${esc(sellNames)}</td><td class="num" title="${esc(typeLabel)}">${int(l.vehicle_count ?? l.tram_count)}</td><td class="num">${int(l.in_depot || 0)}</td><td class="num">${int(l.empty_moving)}</td><td>${esc(l.stop_name || "–")}</td><td class="num">${int(l.waiting)}</td><td class="num">${l.capacity == null ? "–" : int(l.capacity)}</td></tr>`;
     }).join("")}</tbody>`;
   }
 
