@@ -594,6 +594,194 @@ def api_lines(q: dict) -> dict:
     return {"lines": lines, "cargo_types": cargo_types}
 
 
+
+
+def api_vehicle_needs(q: dict) -> dict:
+    """Tram and bus fleet advice from the latest vehicle and station snapshots."""
+    gid = _gid()
+    vehicle_sid = one("SELECT MAX(x.snapshot_id) sid FROM vehicle_state x JOIN snapshot s USING(snapshot_id) WHERE s.game_id=?", (gid,))
+    station_sid = one("SELECT MAX(x.snapshot_id) sid FROM station_state x JOIN snapshot s USING(snapshot_id) WHERE s.game_id=?", (gid,))
+    if not vehicle_sid or vehicle_sid["sid"] is None:
+        return {"lines": [], "summary": {"buy": 0, "sell": 0, "buy_vehicles": 0, "sell_vehicles": 0, "ok": 0}, "empty": True}
+    vsid = vehicle_sid["sid"]
+    ssid = station_sid["sid"] if station_sid and station_sid["sid"] is not None else -1
+
+    # Buses are ROAD carriers with the Bus icon; trams have their own carrier.
+    fleet = rows("""WITH fleet_rows AS (
+                         SELECT vs.line_id,
+                                CASE WHEN v.icon_type='Bus' THEN 'BUS' ELSE 'TRAM' END AS vehicle_type,
+                                v.capacity, vs.load, vs.state, vs.speed_ms
+                         FROM vehicle v JOIN vehicle_state vs ON vs.vehicle_id=v.vehicle_id
+                         WHERE v.game_id=? AND vs.snapshot_id=? AND vs.line_id IS NOT NULL
+                           AND (v.carrier='TRAM' OR (v.carrier='ROAD' AND v.icon_type='Bus'))
+                     ),
+                     fleet_caps AS (
+                         SELECT *, MAX(capacity) OVER (PARTITION BY line_id, vehicle_type) AS line_largest_capacity
+                         FROM fleet_rows
+                     )
+                     SELECT line_id, vehicle_type,
+                            COUNT(*) AS vehicle_count,
+                            SUM(CASE WHEN COALESCE(load,0)=0 THEN 1 ELSE 0 END) AS empty_count,
+                            SUM(CASE WHEN state='EN_ROUTE' AND COALESCE(speed_ms,0)>0
+                                          AND COALESCE(load,0)=0 THEN 1 ELSE 0 END) AS empty_moving,
+                            SUM(CASE WHEN state='IN_DEPOT' THEN 1 ELSE 0 END) AS in_depot,
+                            MAX(capacity) AS largest_capacity,
+                            SUM(COALESCE(capacity, line_largest_capacity, 0)) AS total_capacity
+                     FROM fleet_caps
+                     GROUP BY line_id, vehicle_type""", (gid, vsid))
+    if not fleet:
+        return {"lines": [], "summary": {"buy": 0, "sell": 0, "buy_vehicles": 0, "sell_vehicles": 0, "ok": 0}, "empty": True}
+    fleet_by_line = {(r["line_id"], r["vehicle_type"]): r for r in fleet}
+
+    # Passenger cargo has the language-neutral key "passengers".
+    passenger_ids = {r["cargo_id"] for r in rows(
+        "SELECT cargo_id FROM cargo_type WHERE game_id=? AND lower(COALESCE(key,''))='passengers'", (gid,))}
+    station_rows = rows("""SELECT st.station_group, st.name, t.name AS town_name, ss.waiting
+                           FROM station st
+                           LEFT JOIN town t ON t.game_id=st.game_id AND t.town_id=st.town_id
+                           LEFT JOIN station_state ss ON ss.station_id=st.station_id AND ss.snapshot_id=?
+                           WHERE st.game_id=? AND st.gone IS NULL AND st.station_group IS NOT NULL""", (ssid, gid))
+    group_demand: dict[int, dict] = {}
+    for st in station_rows:
+        group = st["station_group"]
+        info = group_demand.setdefault(group, {"waiting": 0, "town_name": st.get("town_name"), "station_name": st.get("name")})
+        try:
+            entries = json.loads(st["waiting"]) if st.get("waiting") else []
+            if isinstance(entries, list):
+                for item in entries:
+                    if not isinstance(item, dict):
+                        continue
+                    try:
+                        cargo_id = int(item.get("cargo_type"))
+                    except (TypeError, ValueError):
+                        continue
+                    if cargo_id in passenger_ids:
+                        info["waiting"] += int(item.get("total") or 0)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            pass
+        if not info.get("town_name") and st.get("town_name"):
+            info["town_name"] = st["town_name"]
+
+    stops = rows("""SELECT line_id, stop_index, station_group, name
+                    FROM line_stop WHERE game_id=? AND gone IS NULL
+                    ORDER BY line_id, stop_index""", (gid,))
+    stop_by_line: dict[int, list] = {}
+    for stop in stops:
+        demand = group_demand.get(stop["station_group"], {})
+        stop_by_line.setdefault(stop["line_id"], []).append({
+            "stop_name": stop.get("name") or demand.get("station_name"),
+            "town_name": demand.get("town_name"),
+            "waiting_pax": int(demand.get("waiting") or 0),
+        })
+
+    names = {r["line_id"]: r["name"] for r in rows(
+        "SELECT line_id, name FROM line WHERE game_id=? AND gone IS NULL", (gid,))}
+    result = []
+    summary = {"buy": 0, "sell": 0, "buy_vehicles": 0, "sell_vehicles": 0, "ok": 0}
+    for (line_id, vehicle_type), v in fleet_by_line.items():
+        line_stops = stop_by_line.get(line_id, [])
+        # Trams use peak-stop demand; buses only serve the first (city) stop.
+        demand_stop = (line_stops[0] if line_stops else {}) if vehicle_type == "BUS" else max(
+            line_stops, key=lambda x: x["waiting_pax"], default={})
+        waiting = int(demand_stop.get("waiting_pax") or 0)
+        largest_capacity = v.get("largest_capacity")
+        vehicle_count = int(v.get("vehicle_count") or 0)
+        empty_moving = int(v.get("empty_moving") or 0)
+        in_depot = int(v.get("in_depot") or 0)
+
+        sell_vehicles = []
+        buy_count = 0
+        if vehicle_type == "TRAM":
+            # Keep the existing tram policy unchanged.
+            reserve_empty = math.ceil(waiting / largest_capacity) if largest_capacity and largest_capacity > 0 else 1
+            candidates = rows("""SELECT vs.line_id, v.vehicle_id, v.name
+                                 FROM vehicle v JOIN vehicle_state vs ON vs.vehicle_id=v.vehicle_id
+                                 WHERE v.game_id=? AND vs.snapshot_id=? AND v.carrier='TRAM'
+                                   AND vs.line_id=? AND vs.state='EN_ROUTE'
+                                   AND COALESCE(vs.speed_ms,0)>0 AND COALESCE(vs.load,0)=0
+                                 ORDER BY COALESCE(vs.maintenance,1) DESC, v.name, v.vehicle_id""",
+                              (gid, vsid, line_id))
+            names_to_sell = [x.get("name") or f"#{x['vehicle_id']}" for x in candidates]
+            sell_vehicles = names_to_sell[reserve_empty:] if len(names_to_sell) > reserve_empty else []
+            if sell_vehicles:
+                recommendation = "sell"
+            elif largest_capacity is not None and waiting > largest_capacity and int(v.get("empty_count") or 0) == 0:
+                recommendation = "buy"
+                buy_count = 1
+            else:
+                recommendation = "ok"
+        else:
+            # Bus demand is measured at the first (city) stop. Every assigned bus contributes
+            # its capacity, regardless of whether it is moving, stopped, loaded, empty, or in depot.
+            # Individual vehicle revenue is not exported; a previous non-zero load on this same
+            # line is the available evidence that an empty returning bus has carried passengers.
+            capacity = float(largest_capacity or 0)
+            # Bus capacity is normalized per vehicle: fleet size multiplied by the
+            # largest bus capacity on the line. Do not rely on per-vehicle capacity
+            # metadata, which may be zero/missing for empty buses in the export.
+            total_capacity = vehicle_count * capacity
+            required_count = math.ceil(waiting / capacity) if capacity > 0 and waiting > 0 else 0
+
+            # Buy only the capacity deficit, rounded up to whole buses of the largest current size.
+            if capacity > 0 and waiting > total_capacity:
+                buy_count = math.ceil((waiting - total_capacity) / capacity)
+
+            candidates = rows("""SELECT v.vehicle_id, v.name, COALESCE(v.capacity,0) AS capacity
+                                 FROM vehicle v JOIN vehicle_state vs ON vs.vehicle_id=v.vehicle_id
+                                 WHERE v.game_id=? AND vs.snapshot_id=? AND v.carrier='ROAD' AND v.icon_type='Bus'
+                                   AND vs.line_id=? AND vs.state='EN_ROUTE'
+                                   AND COALESCE(vs.speed_ms,0)>0 AND COALESCE(vs.load,0)=0
+                                   AND EXISTS (SELECT 1 FROM vehicle_state old
+                                               JOIN snapshot os USING(snapshot_id)
+                                               WHERE os.game_id=v.game_id AND old.vehicle_id=v.vehicle_id
+                                                 AND old.line_id=vs.line_id AND COALESCE(old.load,0)>0)
+                                 ORDER BY COALESCE(v.capacity,0), v.name, v.vehicle_id""", (gid, vsid, line_id))
+
+            # Sell only the eligible empty returners, and never reduce either the remaining
+            # fleet count below ceil(waiting / largest bus capacity) or its capacity below demand.
+            remaining_capacity = total_capacity
+            remaining_count = vehicle_count
+            max_sell = max(0, vehicle_count - required_count)
+            for candidate in candidates:
+                if len(sell_vehicles) >= max_sell:
+                    break
+                # Every bus is counted at the line's largest bus capacity.
+                candidate_capacity = capacity
+                if remaining_count - 1 < required_count:
+                    break
+                if remaining_capacity - candidate_capacity < waiting:
+                    continue
+                sell_vehicles.append(candidate.get("name") or f"#{candidate['vehicle_id']}")
+                remaining_capacity -= candidate_capacity
+                remaining_count -= 1
+
+            if sell_vehicles and buy_count:
+                recommendation = "buy_sell"
+            elif sell_vehicles:
+                recommendation = "sell"
+            elif buy_count:
+                recommendation = "buy"
+            else:
+                recommendation = "ok"
+
+        summary["buy"] += int(buy_count > 0)
+        summary["sell"] += int(bool(sell_vehicles))
+        summary["buy_vehicles"] += buy_count
+        summary["sell_vehicles"] += len(sell_vehicles)
+        summary["ok"] += int(recommendation == "ok")
+        result.append({
+            "line_id": line_id, "line_name": names.get(line_id) or f"#{line_id}",
+            "town_name": next((s.get("town_name") for s in line_stops if s.get("town_name")), None),
+            "vehicle_type": vehicle_type, "vehicle_count": vehicle_count,
+            "tram_count": vehicle_count, "empty_moving": empty_moving,
+            "in_depot": in_depot, "sell_vehicles": sell_vehicles, "buy_count": buy_count,
+            "stop_name": demand_stop.get("stop_name"), "waiting": waiting,
+            "capacity": largest_capacity, "total_capacity": v.get("total_capacity"), "recommendation": recommendation,
+        })
+    result.sort(key=lambda x: ({"buy_sell": 0, "buy": 0, "sell": 1, "ok": 2}[x["recommendation"]],
+                               (x["town_name"] or "").casefold(), x["line_name"].casefold()))
+    return {"lines": result, "summary": summary, "empty": False}
+
 def api_line_history(q: dict) -> dict:
     lid = int(q["id"][0])
     gid = _gid()
@@ -2304,7 +2492,7 @@ def api_diag(q: dict) -> dict:
 
 
 ROUTES = {
-    "/api/overview": api_overview, "/api/cost": api_cost, "/api/finance": api_finance, "/api/journal": api_journal, "/api/alerts": api_alerts, "/api/lines": api_lines,
+    "/api/overview": api_overview, "/api/vehicle_needs": api_vehicle_needs, "/api/cost": api_cost, "/api/finance": api_finance, "/api/journal": api_journal, "/api/alerts": api_alerts, "/api/lines": api_lines,
     "/api/line_history": api_line_history, "/api/vehicles": api_vehicles, "/api/fleet": api_fleet, "/api/vehicle_history": api_vehicle_history, "/api/towns": api_towns,
     "/api/town_history": api_town_history, "/api/industries": api_industries, "/api/industry_history": api_industry_history, "/api/stations": api_stations,
     "/api/station_history": api_station_history, "/api/depots": api_depots, "/api/map": api_map, "/api/map_cargo": api_map_cargo, "/api/geo": api_geo, "/api/heightmap": api_heightmap, "/api/line_paths": api_line_paths, "/api/distance": api_distance, "/api/travellings": api_travellings, "/api/diag": api_diag, "/api/views": api_views,

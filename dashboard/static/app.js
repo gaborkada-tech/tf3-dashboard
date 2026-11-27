@@ -1081,6 +1081,35 @@ const rgbLit = (r, g, b, minY = 0.42) => {
     // average yearly balance over the last settings.balYears full financial years (server: avg_balance); "~" = fewer years
     const avgBal = (l) => { if (l.avg_balance == null) return "-"; const n = settings.balYears, k = l.avg_balance_years, part = k < n;
       return `<span class="${l.avg_balance < 0 ? "mneg" : "mpos"}" title="${esc(t("avg_balance_tip", { n }) + (part ? "\n" + t("avg_balance_partial_tip", { k, n }) : ""))}">${part ? "~" : ""}${money(l.avg_balance)}</span>`; };
+
+  async function renderVehicleNeeds() {
+    const d = await api("/api/vehicle_needs");
+    const lines = d.lines || [], sum = d.summary || { buy: 0, sell: 0, ok: 0 };
+    $("#tram-needs-summary").innerHTML = [
+      ["buy", t("tram_buy_count"), sum.buy || 0],
+      ["sell", t("tram_sell_count"), sum.sell || 0],
+      ["ok", t("tram_ok_count"), sum.ok || 0]
+    ].map(([kind, label, n]) => `<div class="tram-kpi ${kind}"><span>${esc(label)}</span><strong>${int(n)}</strong></div>`).join("");
+    const table = $("#tram-needs-table");
+    if (!lines.length) {
+      table.innerHTML = `<tbody><tr><td class="muted">${esc(t("tram_no_lines"))}</td></tr></tbody>`;
+      return;
+    }
+    const headers = ["tram_city", "tram_line", "tram_recommendation", "tram_sell_vehicles", "tram_total", "tram_in_depot", "tram_empty_moving", "tram_busiest_stop", "tram_waiting", "tram_capacity", "tram_line_capacity"];
+    table.innerHTML = `<thead><tr>${headers.map(k => `<th>${esc(t(k))}</th>`).join("")}</tr></thead><tbody>${lines.map(l => {
+      const rec = l.recommendation;
+      const parts = [];
+      if (l.buy_count > 0) parts.push(`${t("tram_buy")} ×${int(l.buy_count)}`);
+      if (l.sell_vehicles?.length) parts.push(t("tram_sell"));
+      if (!parts.length) parts.push(t("tram_ok"));
+      const label = parts.join(" · ");
+      const sellNames = l.sell_vehicles?.length ? l.sell_vehicles.join(", ") : "–";
+      const typeLabel = l.vehicle_type === "BUS" ? t("tram_bus") : t("tram_tram");
+      const adviceClass = l.buy_count > 0 ? "buy" : l.sell_vehicles?.length ? "sell" : "ok";
+      return `<tr><td>${esc(l.town_name || "–")}</td><td>${esc(l.line_name)}</td><td><span class="tram-advice ${adviceClass}">${esc(label)}</span></td><td>${esc(sellNames)}</td><td class="num" title="${esc(typeLabel)}">${int(l.vehicle_count ?? l.tram_count)}</td><td class="num">${int(l.in_depot || 0)}</td><td class="num">${int(l.empty_moving)}</td><td>${esc(l.stop_name || "–")}</td><td class="num">${int(l.waiting)}</td><td class="num">${l.capacity == null ? "–" : int(l.capacity)}</td><td class="num">${l.total_capacity == null ? "–" : int(l.total_capacity)}</td></tr>`;
+    }).join("")}</tbody>`;
+  }
+
   async function renderLines() {
     const d = await api("/api/lines", { years: settings.balYears }); const lines = d.lines || []; state.cache.lines = lines;
     state.cache.cargoTypes = d.cargo_types || [];
@@ -3739,7 +3768,7 @@ const rgbLit = (r, g, b, minY = 0.42) => {
   }
 
   // ------------------------------------------------------------ refresh loop
-  const RENDER = { overview: renderOverview, lines: renderLines, vehicles: renderVehicles, towns: renderTowns, industries: renderIndustries, stations: renderStations, map: renderMap, finance: renderFinance, mechanics: renderWiki };
+  const RENDER = { overview: renderOverview, lines: renderLines, "vehicle-needs": renderVehicleNeeds, vehicles: renderVehicles, towns: renderTowns, industries: renderIndustries, stations: renderStations, map: renderMap, finance: renderFinance, mechanics: renderWiki };
   let busy = false, again = false;
   // A pointer button held down = the user is mid-click. Re-rendering now would swap the element under
   // the pointer between mousedown and mouseup and the browser would drop the click (one had to click twice).
