@@ -1095,7 +1095,7 @@ const rgbLit = (r, g, b, minY = 0.42) => {
       table.innerHTML = `<tbody><tr><td class="muted">${esc(t("tram_no_lines"))}</td></tr></tbody>`;
       return;
     }
-    const headers = ["tram_city", "tram_line", "tram_recommendation", "tram_sell_vehicles", "tram_total", "tram_in_depot", "tram_empty_moving", "tram_busiest_stop", "tram_waiting", "tram_capacity"];
+    const headers = ["tram_city", "tram_line", "tram_recommendation", "tram_sell_vehicles", "tram_total", "tram_in_depot", "tram_empty_moving", "tram_busiest_stop", "tram_waiting", "tram_capacity", "tram_line_capacity"];
     table.innerHTML = `<thead><tr>${headers.map(k => `<th>${esc(t(k))}</th>`).join("")}</tr></thead><tbody>${lines.map(l => {
       const rec = l.recommendation;
       const parts = [];
@@ -1106,7 +1106,7 @@ const rgbLit = (r, g, b, minY = 0.42) => {
       const sellNames = l.sell_vehicles?.length ? l.sell_vehicles.join(", ") : "–";
       const typeLabel = l.vehicle_type === "BUS" ? t("tram_bus") : t("tram_tram");
       const adviceClass = l.buy_count > 0 ? "buy" : l.sell_vehicles?.length ? "sell" : "ok";
-      return `<tr><td>${esc(l.town_name || "–")}</td><td>${esc(l.line_name)}</td><td><span class="tram-advice ${adviceClass}">${esc(label)}</span></td><td>${esc(sellNames)}</td><td class="num" title="${esc(typeLabel)}">${int(l.vehicle_count ?? l.tram_count)}</td><td class="num">${int(l.in_depot || 0)}</td><td class="num">${int(l.empty_moving)}</td><td>${esc(l.stop_name || "–")}</td><td class="num">${int(l.waiting)}</td><td class="num">${l.capacity == null ? "–" : int(l.capacity)}</td></tr>`;
+      return `<tr><td>${esc(l.town_name || "–")}</td><td>${esc(l.line_name)}</td><td><span class="tram-advice ${adviceClass}">${esc(label)}</span></td><td>${esc(sellNames)}</td><td class="num" title="${esc(typeLabel)}">${int(l.vehicle_count ?? l.tram_count)}</td><td class="num">${int(l.in_depot || 0)}</td><td class="num">${int(l.empty_moving)}</td><td>${esc(l.stop_name || "–")}</td><td class="num">${int(l.waiting)}</td><td class="num">${l.capacity == null ? "–" : int(l.capacity)}</td><td class="num">${l.total_capacity == null ? "–" : int(l.total_capacity)}</td></tr>`;
     }).join("")}</tbody>`;
   }
 
