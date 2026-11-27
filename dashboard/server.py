@@ -607,19 +607,28 @@ def api_vehicle_needs(q: dict) -> dict:
     ssid = station_sid["sid"] if station_sid and station_sid["sid"] is not None else -1
 
     # Buses are ROAD carriers with the Bus icon; trams have their own carrier.
-    fleet = rows("""SELECT vs.line_id,
-                           CASE WHEN v.icon_type='Bus' THEN 'BUS' ELSE 'TRAM' END AS vehicle_type,
-                           COUNT(*) AS vehicle_count,
-                           SUM(CASE WHEN COALESCE(vs.load,0)=0 THEN 1 ELSE 0 END) AS empty_count,
-                           SUM(CASE WHEN vs.state='EN_ROUTE' AND COALESCE(vs.speed_ms,0)>0
-                                         AND COALESCE(vs.load,0)=0 THEN 1 ELSE 0 END) AS empty_moving,
-                           SUM(CASE WHEN vs.state='IN_DEPOT' THEN 1 ELSE 0 END) AS in_depot,
-                           MAX(v.capacity) AS largest_capacity,
-                           SUM(COALESCE(v.capacity,0)) AS total_capacity
-                    FROM vehicle v JOIN vehicle_state vs ON vs.vehicle_id=v.vehicle_id
-                    WHERE v.game_id=? AND vs.snapshot_id=? AND vs.line_id IS NOT NULL
-                      AND (v.carrier='TRAM' OR (v.carrier='ROAD' AND v.icon_type='Bus'))
-                    GROUP BY vs.line_id, CASE WHEN v.icon_type='Bus' THEN 'BUS' ELSE 'TRAM' END""", (gid, vsid))
+    fleet = rows("""WITH fleet_rows AS (
+                         SELECT vs.line_id,
+                                CASE WHEN v.icon_type='Bus' THEN 'BUS' ELSE 'TRAM' END AS vehicle_type,
+                                v.capacity, vs.load, vs.state, vs.speed_ms
+                         FROM vehicle v JOIN vehicle_state vs ON vs.vehicle_id=v.vehicle_id
+                         WHERE v.game_id=? AND vs.snapshot_id=? AND vs.line_id IS NOT NULL
+                           AND (v.carrier='TRAM' OR (v.carrier='ROAD' AND v.icon_type='Bus'))
+                     ),
+                     fleet_caps AS (
+                         SELECT *, MAX(capacity) OVER (PARTITION BY line_id, vehicle_type) AS line_largest_capacity
+                         FROM fleet_rows
+                     )
+                     SELECT line_id, vehicle_type,
+                            COUNT(*) AS vehicle_count,
+                            SUM(CASE WHEN COALESCE(load,0)=0 THEN 1 ELSE 0 END) AS empty_count,
+                            SUM(CASE WHEN state='EN_ROUTE' AND COALESCE(speed_ms,0)>0
+                                          AND COALESCE(load,0)=0 THEN 1 ELSE 0 END) AS empty_moving,
+                            SUM(CASE WHEN state='IN_DEPOT' THEN 1 ELSE 0 END) AS in_depot,
+                            MAX(capacity) AS largest_capacity,
+                            SUM(COALESCE(capacity, line_largest_capacity, 0)) AS total_capacity
+                     FROM fleet_caps
+                     GROUP BY line_id, vehicle_type""", (gid, vsid))
     if not fleet:
         return {"lines": [], "summary": {"buy": 0, "sell": 0, "buy_vehicles": 0, "sell_vehicles": 0, "ok": 0}, "empty": True}
     fleet_by_line = {(r["line_id"], r["vehicle_type"]): r for r in fleet}
@@ -733,7 +742,9 @@ def api_vehicle_needs(q: dict) -> dict:
             for candidate in candidates:
                 if len(sell_vehicles) >= max_sell:
                     break
-                candidate_capacity = float(candidate.get("capacity") or 0)
+                # Some empty vehicles have no capacity populated in the vehicle record.
+                # In that case use the largest known capacity on this line rather than zero.
+                candidate_capacity = float(candidate.get("capacity") or capacity or 0)
                 if remaining_count - 1 < required_count:
                     break
                 if remaining_capacity - candidate_capacity < waiting:
